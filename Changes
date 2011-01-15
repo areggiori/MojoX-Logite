@@ -1,0 +1,6 @@
+Revision history for Perl extension MojoX::Logite.
+
+0.01  Wed Jan 12 19:46:27 2011
+	- original version; created by h2xs 1.23 with options
+		-X MojoX::Logite
+
