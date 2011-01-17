@@ -12,20 +12,21 @@ use Mojo::Util qw (camelize);
 our $VERSION = '0.01';
 
 our $LOG_TABLE = 'LogiteTable';
-our $LOG_IDX1 = $LOG_TABLE.'When';
-our $LOG_IDX2 = $LOG_TABLE.'LevelWhoPkgIdx';
+our $LOG_IDX1 = $LOG_TABLE.'Idx1';
+our $LOG_IDX2 = $LOG_TABLE.'Idx2';
 our $LOG_SCHEMA = <<SCHEMA;
 CREATE TABLE $LOG_TABLE (
-                      l_id       INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT,
-                      l_who_pkg  CHAR(255)  DEFAULT NULL,
-                      l_who_line CHAR(255)  DEFAULT NULL,
-                      l_what     TEXT       DEFAULT NULL,
-                      l_when     INTEGER    NOT NULL,
-                      l_level    CHAR(10)   DEFAULT NULL,
-                      l_ctx      TEXT       DEFAULT NULL
+                      l_id          INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT,
+                      l_who_app     TEXT DEFAULT NULL,
+                      l_who_mod     TEXT DEFAULT NULL,
+                      l_who_pos     TEXT DEFAULT NULL,
+                      l_who_id      TEXT DEFAULT NULL,
+                      l_what        TEXT DEFAULT NULL,
+                      l_when        INTEGER NOT NULL,
+                      l_level       CHAR(10) DEFAULT NULL
                       );
 CREATE INDEX IF NOT EXISTS $LOG_IDX1 ON $LOG_TABLE (l_when);
-CREATE INDEX IF NOT EXISTS $LOG_IDX2 ON $LOG_TABLE (l_level,l_who_pkg);
+CREATE INDEX IF NOT EXISTS $LOG_IDX2 ON $LOG_TABLE (l_level,l_who_app,l_who_mod);
 SCHEMA
 
 # some ORLite attributes
@@ -34,6 +35,8 @@ __PACKAGE__->attr('prune' => 0);
 __PACKAGE__->attr('user_version');
 __PACKAGE__->attr('cache');
 __PACKAGE__->attr('readonly');
+
+__PACKAGE__->attr('app');
 
 sub new
 {
@@ -99,15 +102,20 @@ sub log
   my ($pkg, $line) = (caller())[0, 2];
   ($pkg, $line) = (caller(1))[0, 2] if $pkg eq ref $self or $pkg =~ m/Mojo::Log/;
 
-  # Write
-  $self->package_table->create(
-    'l_who_pkg'  => $pkg,
-    'l_who_line' => $line,
+  my %log_message = (
+    'l_who_mod'  => $pkg,
+    'l_who_pos'  => $line,
+    'l_who_id'   => $$,
     'l_what'     => $msgs,
     'l_when'     => int($timestamp),
-    'l_level'    => $level,
-    'l_ctx'      => $$ 
+    'l_level'    => $level
     );
+
+  $log_message{ 'l_who_app' } = $self->app
+    if ($self->app);
+
+  # Write
+  $self->package_table->create( %log_message );
 
   return $self;
 }
@@ -204,7 +212,7 @@ are created apart the DB file itself.
 =head1 ATTRIBUTES
 
 L<MojoX::Logite> inherits all attributes from L<Mojo::Log> and implements
-the following new ones directly taken from ORLite.
+the following new ones.
 
 =head2 C<package>
 
@@ -241,6 +249,15 @@ Cache ORLite auto-generated package structures. See ORLite documentation.
 
 Not very useful, if not to just open log DB for statistics and no log operationas are required. See
 ORLite documentation.
+
+=head2 C<app>
+
+    my $app = $logite->app;
+
+If set it is a name or identifier for the application which is logging information. This might be useful
+for applications which need to track additional contextual information on a per-application base, in addition
+to track the default package, line, log level and process pid information. By default, no additional app
+context is set.
 
 =head1 METHODS
 
@@ -286,6 +303,12 @@ B<READ carefully the ORLite module documentation first trying anything, you coul
  Mojo::Log
  Mojolicious
  ORLite
+
+ "Patterns for Logging Diagnostic Messages" from Neil Harrison
+
+=head1 REPOSITORY
+
+http://github.com/areggiori/MojoX-Logite
 
 =head1 AUTHOR
 
