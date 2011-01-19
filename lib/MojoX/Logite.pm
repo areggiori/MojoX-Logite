@@ -43,7 +43,10 @@ __PACKAGE__->attr('context_map' => sub { {} });
 
 sub new
 {
-  my $self = shift->SUPER::new(@_);
+  my $class = shift;
+
+  my $self = $class->SUPER::new(@_);
+  bless $self, $class;
 
   # ORLite dynamic stuff
   require ORLite;
