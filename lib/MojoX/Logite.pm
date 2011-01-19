@@ -38,6 +38,9 @@ __PACKAGE__->attr('readonly');
 
 __PACKAGE__->attr('app');
 
+__PACKAGE__->attr('context_stack' => sub { [] });
+__PACKAGE__->attr('context_map' => sub { {} });
+
 sub new
 {
   my $self = shift->SUPER::new(@_);
@@ -96,7 +99,8 @@ sub log
 
   my $timestamp = time; # time in milliseconds
   my $msgs = join "\n",
-  map { utf8::decode $_ unless utf8::is_utf8 $_; $_ } @msgs;
+    map { utf8::decode $_ unless utf8::is_utf8 $_;
+          $self->_placeholders($_); } @msgs;
 
   # Caller
   my ($pkg, $line) = (caller())[0, 2];
@@ -140,6 +144,35 @@ sub clear
     }
 
   return $self;
+}
+
+sub _placeholders
+{
+  my ($self, $msg) = @_;
+  
+  $msg =~ s/%([xX])(?:{(.*?)})*/_replace($self, $1, $2);/gex;
+
+  return $msg;
+}
+
+sub _replace
+{
+  my ($self, $what, $key) = @_;
+
+  my $ret = "[undef]";
+
+  if ($what eq 'x')
+    {
+      $ret = join " ", @{$self->context_stack}
+        if (defined $self->context_stack->[-1]);
+    }
+  elsif ($what eq 'X')
+    {
+      $ret = $self->context_map->{$key}
+        if (exists $self->context_map->{$key});
+    }
+
+  return $ret;
 }
 
 1;
@@ -259,10 +292,77 @@ for applications which need to track additional contextual information on a per-
 to track the default package, line, log level and process pid information. By default, no additional app
 context is set.
 
+=head2 C<context_stack>
+
+    my $context_stack = $logite->context_stack;
+
+    # peek
+    my $value = $logite->context_stack->[-1];
+
+    # pop
+    my $value = pop @{$logite->context_stack};
+
+    # likewise perl equivalents shift/unshift/slice etc...
+
+    # push
+    push @{$logite->context_stack}, $value;
+
+    # clear any state
+    $logite->context_stack( [] ); 
+
+The Nested Diagnostic Context (NDC) to use to generate contextual logging information using
+the %x placeholder. See C<DIAGNOSTIC CONTEXTS> below.
+
+=head2 C<context_map>
+
+    my $context_map = $logite->context_map;
+
+    my $state = $logite->context_map->{state};
+
+    $logite->context_map->{new_state} = $new_value;
+
+    # clear any state
+    $logite->context_map( {} );
+
+The Mapped Diagnostic Context (MDC) to use to generate contextual logging information using
+the %X{key} placeholder. See C<DIAGNOSTIC CONTEXTS> below.
+
 =head1 METHODS
 
 L<MojoX::Logite> inherits all methods from L<Mojo::Log> and implements the
 following new ones.
+
+=head2 C<log>($level, @messages)
+
+  $log = $log->log(debug => 'This should work');
+
+This method simply overrides the default Mojo::Log one and logs information to the underling SQL table.
+
+In addition, diagnostic context information the following I<placeholders> can be used
+in the log messages passed to the method:
+
+    %x The topmost NDC (see C<context_stack> attribute above)
+    %X{key} The entry 'key' of the MDC ( see C<context_map> attribute above)
+
+NDC and MDC are explained in C<DIAGNOSTIC CONTEXTS> below.
+
+For example using NDC the following:
+
+  push @{$logite->context_stack}, "193.123.45.67";
+
+  $log = $log->log(debug => '[%x] This should work');
+
+Should store into the SQL table a log message like
+
+  "[193.123.45.67] This should work"
+
+Or using MDC instead:
+
+  $log->context_map->{ip} = "193.123.45.67";
+  
+  $log = $log->log(debug => '[%X{ip}] This should work');
+
+Should generate the same message.
 
 =head2 C<package_table>
 
@@ -297,9 +397,48 @@ B<BE CAREFUL IF YOU DO NOT KNOW WHAT YOU ARE DOING!>
 
 B<READ carefully the ORLite module documentation first trying anything, you could corrupt or wipe you log DB files without notice>
 
+=head1 DIAGNOSTIC CONTEXTS
+
+MojoX::Logite allows loggers to maintain common contextual data,
+called the Nested Diagnostic Context (NDC) and Mapped Diagnostic Context (MDC).
+
+The concept of diagnostic logging context is described in
+Neil Harrison "Patterns for Logging Diagnostic Messages" article, and it is
+already implemented into other logging APIs such as Log::Log4perl::MDC.
+
+An MDC is a simple hash table which can be associated to a logger in order to
+preserve context between different logging operations. An application can stuff
+values under certain keys and retrieve them later via the C<"%X{key}">
+placeholder as part of the message/s passed to the MojoX::Logite log method. This
+has the benefit to allow to pass a state between different logging operations then
+more contextual information can be extracted from the log. See the C<context_map>
+attribute above.
+
+In some other cases, at some point the application might decide to push a piece of
+data onto the NDC stack, which other parts of the application might
+want to reuse. For example, at the beginning of a web request in a server,
+the application might decide to push the IP address of the client
+onto the stack to provide it for other loggers down the road without
+having to pass the data from function to function.
+
+MojoX::Logite provides the C<%x> placeholder which is replaced by a string
+which is a blank-separated concatenation of the elements currently on the context stack.
+See the C<context_stack> attribute above.
+
+A diagnostic logging context come in handy when users have lots of logs to go through.
+For example when diagnosing weird bugs on a production system with interleaving outputs.
+Having more contexts gives you way to filter the output or not outputting unneeded logs.
+
+Once an MDC is tied to a logger any log() operation will automatically refer and use the
+MDC hash information when referred into output log messages with placeholders. See MojoX::Logite.
+
+MojoX::Logite will automatically replace any %X{key} with the correspoding MDC hash value.
+
 =head1 SEE ALSO
 
  Mojolicious::Plugin::Logite
+ Mojolicious::Plugin::Logite::MDC
+ Mojolicious::Plugin::Logite::NDC
  Mojo::Log
  Mojolicious
  ORLite
